@@ -147,14 +147,17 @@ if selected == "Início":
 
 if selected == "Dashboard":
     st.title(f"{selected} de Resultados")
-    PBI_PUBLIC_URL = "https://app.powerbi.com/view?r=eyJrIjoiYTkzODRkZDUtNjQxZC00ZjIzLThiMTctYjM3YzY2ZjA3NTI0IiwidCI6ImNmNzJlMmJkLTdhMmItNDc4My1iZGViLTM5ZDU3YjA3Zjc2ZiIsImMiOjR9"
+
+    # Link seguro (Embed para a organização)
+    PBI_ORG_URL = "https://app.powerbi.com/reportEmbed?reportId=4228da85-3150-4446-b859-bc6a523ff392&autoAuth=true&ctid=99e4b1c3-59a8-4500-8202-462ba4069af1"
+
     st.components.v1.html(
         f"""
         <div style="position:relative; width:100%; max-width: 800px; margin: 0 auto;">
             <div style="position:relative; padding-top:56.25%; border-radius:14px; overflow:hidden; box-shadow:0 10px 24px rgba(0,0,0,.12);">
                 <iframe
-                    title="Vedê Bar - KPI"
-                    src="{PBI_PUBLIC_URL}"
+                    title="Vedê Bar - Dashboard Premium"
+                    src="{PBI_ORG_URL}&filterPaneEnabled=false&navContentPaneEnabled=false"
                     frameborder="0"
                     allowFullScreen="true"
                     style="position:absolute; top:0; left:0; width:100%; height:100%; border:0;">
@@ -167,6 +170,7 @@ if selected == "Dashboard":
         """,
         height=600,
     )
+
 
 if selected == "Análise Preditiva":
     st.title(f"Bem vindo a página {selected}")
