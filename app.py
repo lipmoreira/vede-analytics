@@ -86,11 +86,12 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     selected = option_menu(
-        menu_title=None,
-        options=["Início", "Dashboard", "Análise Preditiva"],
-        icons=["house-fill", "window-stack", "speedometer"],
-        default_index=0,
+    menu_title=None,
+    options=["Início", "Dashboard", "Análise Preditiva", "Operação"],  # + Operação
+    icons=["house-fill", "window-stack", "speedometer", "clipboard-data"],
+    default_index=0,
     )
+
 
     st.markdown("""
     <div class="sidebar-footer">
@@ -124,7 +125,7 @@ def page_inicio():
                     background-color: rgba(224,164,0,0.15);
                     border-left: 8px solid #E0A400;
                     font-size: 18px; margin-top: 20px; color:#fff;'>
-            🔍 <strong>Analytics do Vedê Bar</strong><br>
+              <strong>Analytics do Vedê Bar</strong><br>
             Acompanhe indicadores e consuma insights para melhorar a gestão do bar.
         </div>
         """,
@@ -475,6 +476,134 @@ def page_pred():
 
     st.pyplot(fig)
 
+def page_operacao():
+    import os
+    import numpy as np
+    import pandas as pd
+    from sklearn.cluster import KMeans
+    import streamlit as st
+
+    st.title("Operação")
+
+    # ======== Leitura de dados (sem expor info técnica na UI) ========
+    MENU_CSV = "total_produtos_vendidos_base_tratada.csv"
+
+    @st.cache_data(show_spinner=False)
+    def load_menu_df(path: str) -> pd.DataFrame:
+        # autodetecta separador (engine=python) e remove BOM dos cabeçalhos
+        df = pd.read_csv(path, sep=None, engine="python")
+        df.columns = [c.encode("utf-8").decode("utf-8-sig") for c in df.columns]
+        # normaliza numéricos no formato BR para decimal ponto
+        for col in ["Quantidade", "Valor_Total"]:
+            if col in df.columns:
+                df[col] = (
+                    df[col].astype(str)
+                          .str.replace(".", "", regex=False)
+                          .str.replace(",", ".", regex=False)
+                )
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        return df
+
+    if not os.path.exists(MENU_CSV):
+        st.warning("Dados não disponíveis no momento.")
+        st.stop()
+
+    df_menu_raw = load_menu_df(MENU_CSV)
+
+    # ======== Inteligência de Cardápio (Top 3) ========
+    st.markdown("### Inteligência de Cardápio")
+
+    st.markdown("##### Classificação automática (K-Means)")
+    executar = st.button("Analisar Top 3", use_container_width=True)
+
+    if executar:
+        col_prod, col_qtd, col_val = "Nome", "Quantidade", "Valor_Total"
+        missing = [c for c in [col_prod, col_qtd, col_val] if c not in df_menu_raw.columns]
+        if missing:
+            st.warning("Dados não disponíveis no momento.")
+            st.stop()
+
+        # Agrega por produto
+        df_menu = (
+            df_menu_raw.groupby(col_prod, as_index=False)
+                       .agg({col_qtd: "sum", col_val: "sum"})
+                       .rename(columns={col_prod: "Produto", col_qtd: "Qtd", col_val: "Valor"})
+        )
+        df_menu = df_menu[(df_menu["Qtd"] > 0) | (df_menu["Valor"] > 0)].reset_index(drop=True)
+
+        if len(df_menu) >= 3:
+            # Clusterização (Valor x Qtd)
+            Xk = df_menu[["Valor", "Qtd"]].values
+            model = KMeans(n_clusters=3, n_init=10, random_state=42)
+            labels = model.fit_predict(Xk)
+            centers = model.cluster_centers_
+
+            # Define cluster TOP pelo maior centro em "Valor"
+            order = np.argsort(-centers[:, 0])
+            rank = {cluster: idx for idx, cluster in enumerate(order)}  # 0 = top
+
+            df_menu["cluster_rank"] = [rank[l] for l in labels]
+            palette = np.array(["#2e7d32", "#f9a825", "#6a1b9a"])
+            df_menu["cor"] = palette[df_menu["cluster_rank"].to_numpy()]
+
+            # Top 3 do cluster TOP
+            top = (df_menu[df_menu["cluster_rank"] == 0]
+                   .sort_values("Valor", ascending=False)
+                   .head(3))
+
+            cards = []
+            for _, row in top.iterrows():
+                val_fmt = f"R$ {row['Valor']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                # HTML plano (sem indentação para não virar code block)
+                card = f"""
+<div style="flex:1; min-width:260px; background:#111418; border:1px solid #1f2630;
+           padding:14px; border-radius:12px; margin:6px; backdrop-filter: blur(4px);
+           border-left:6px solid {row['cor']}; box-shadow: 0 6px 18px rgba(0,0,0,.25);">
+  <div style="font-weight:700; color:#fff; font-size:15px; display:flex; justify-content:space-between;">
+    <span>{row['Produto']}</span>
+    <span style="background:{row['cor']}; color:#fff; padding:2px 8px; border-radius:999px; font-size:11px;">TOP</span>
+  </div>
+  <div style="font-size:12px; color:#cfd6df; margin-top:6px;">
+    <strong style="color:#fff;">{val_fmt}</strong>  ({int(row['Qtd'])} unid.)
+  </div>
+</div>
+"""
+                cards.append(card)
+
+            html = "<div style='display:flex; flex-wrap:wrap; gap:8px;'>" + "".join(cards) + "</div>"
+            # altura aproximada conforme nº de cards
+            h = 180 + 20 * max(0, len(cards)-1)
+            st.components.v1.html(html, height=h, scrolling=False)
+        else:
+            st.info("Não há produtos suficientes para formar um ranking.")
+
+    st.markdown("---")
+
+    # ======== Caixa do dia + Simulador PDV ========
+    c_left, c_right = st.columns(2)
+
+    with c_left:
+        st.markdown("### Caixa do dia")
+        if "caixa_total" not in st.session_state: st.session_state.caixa_total = 0.0
+        if "caixa_ped" not in st.session_state: st.session_state.caixa_ped = 0
+
+        colA, colB = st.columns(2)
+        colA.metric("Total", f"R$ {st.session_state.caixa_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        colB.metric("Pedidos", f"{st.session_state.caixa_ped}")
+
+    with c_right:
+        st.markdown("### Simulador PDV")
+        col1, col2 = st.columns(2)
+        if col1.button("Registrar Gin (R$35)", use_container_width=True):
+            st.session_state.caixa_total += 35
+            st.session_state.caixa_ped += 1
+            st.success("Registrado!")
+        if col2.button("Registrar Heineken (R$15)", use_container_width=True):
+            st.session_state.caixa_total += 15
+            st.session_state.caixa_ped += 1
+            st.success("Registrado!")
+
+
 # =========================
 # ROTEADOR
 # =========================
@@ -484,3 +613,5 @@ elif selected == "Dashboard":
     page_dashboard()
 elif selected == "Análise Preditiva":
     page_pred()
+elif selected == "Operação":  # <--- novo
+    page_operacao()
